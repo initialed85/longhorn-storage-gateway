@@ -3,3 +3,7 @@ kind: Kustomization
 resources:
   - ../config/crd
   - ../config/manager
+images:
+  - name: ghcr.io/initialed85/longhorn-nfs-gateway
+    newName: docker.io/initialed85/longhorn-nfs-gateway
+    digest: sha256:ae502ec89f0d349d4d4991b9dfa6d574c40ab8297a1bb2a953ab42c32dd53302
