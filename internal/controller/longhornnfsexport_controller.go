@@ -11,6 +11,7 @@ import (
 	storagev1alpha1 "github.com/initialed85/longhorn-nfs-gateway/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +32,7 @@ import (
 const (
 	longhornDriver               = "driver.longhorn.io"
 	defaultNFSGaneshaImage       = "docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b"
-	defaultProxyImage            = "docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1"
+	defaultProxyImage            = "docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1e"
 	defaultServiceType           = "ClusterIP"
 	shareManagerNamespace        = "longhorn-system"
 	defaultMountPort       int32 = 20048
@@ -60,6 +61,7 @@ func (r *LonghornNFSExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(r.mapPVC)).
 		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.mapPV)).
 		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.mapShareManagerService)).
+		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.mapShareManagerEndpointSlice)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPod)).
 		Complete(r)
 }
@@ -519,6 +521,21 @@ func (r *LonghornNFSExportReconciler) findShareManager(ctx context.Context, pv *
 	if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
 		return nil, "ShareManagerPending", fmt.Sprintf("share-manager Service %s/%s has no ClusterIP", service.Namespace, service.Name), nil
 	}
+	var slices discoveryv1.EndpointSliceList
+	if err := r.List(ctx, &slices, client.InNamespace(service.Namespace), client.MatchingLabels{discoveryv1.LabelServiceName: service.Name}); err != nil {
+		return nil, "ShareManagerEndpointReadError", err.Error(), err
+	}
+	readyEndpoint := false
+	for _, slice := range slices.Items {
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready {
+				readyEndpoint = true
+			}
+		}
+	}
+	if !readyEndpoint {
+		return nil, "ShareManagerUnavailable", fmt.Sprintf("share-manager Service %s/%s has no Ready endpoints", service.Namespace, service.Name), nil
+	}
 	for _, port := range service.Spec.Ports {
 		if port.Port == defaultNFSPort {
 			return &shareManagerEndpoint{Server: service.Spec.ClusterIP, Path: "/" + pv.Name}, "", "", nil
@@ -542,6 +559,13 @@ func (r *LonghornNFSExportReconciler) mapShareManagerService(ctx context.Context
 		}
 	}
 	return requests
+}
+
+func (r *LonghornNFSExportReconciler) mapShareManagerEndpointSlice(ctx context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetNamespace() != shareManagerNamespace {
+		return nil
+	}
+	return r.mapShareManagerService(ctx, obj)
 }
 
 func (r *LonghornNFSExportReconciler) mapPVC(ctx context.Context, obj client.Object) []reconcile.Request {

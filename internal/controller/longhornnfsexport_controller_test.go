@@ -9,6 +9,7 @@ import (
 	storagev1alpha1 "github.com/initialed85/longhorn-nfs-gateway/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,7 +22,7 @@ import (
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, storagev1alpha1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, discoveryv1.AddToScheme, storagev1alpha1.AddToScheme} {
 		if err := add(s); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +165,8 @@ func TestRWXDiscoversShareManagerAndCreatesProxy(t *testing.T) {
 	pvc, pv := testPVCAndPV()
 	pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
 	shareManager := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: pv.Name, Namespace: shareManagerNamespace, Labels: map[string]string{"longhorn.io/share-manager": pv.Name}}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.5", Ports: []corev1.ServicePort{{Name: "nfs", Port: defaultNFSPort}}}}
-	r, c := newReconciler(t, export, pvc, pv, shareManager)
+	endpointSlice := &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: "share-manager-slice", Namespace: shareManagerNamespace, Labels: map[string]string{discoveryv1.LabelServiceName: pv.Name}}, AddressType: discoveryv1.AddressTypeIPv4, Endpoints: []discoveryv1.Endpoint{{Addresses: []string{"10.42.0.5"}}}}
+	r, c := newReconciler(t, export, pvc, pv, shareManager, endpointSlice)
 	ctx := context.Background()
 	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
 		t.Fatal(err)
@@ -194,7 +196,8 @@ func TestRWXShareManagerLossCleansProxyAndWaits(t *testing.T) {
 	pvc, pv := testPVCAndPV()
 	pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
 	shareManager := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: pv.Name, Namespace: shareManagerNamespace, Labels: map[string]string{"longhorn.io/share-manager": pv.Name}}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.5", Ports: []corev1.ServicePort{{Name: "nfs", Port: defaultNFSPort}}}}
-	r, c := newReconciler(t, export, pvc, pv, shareManager)
+	endpointSlice := &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: "share-manager-slice", Namespace: shareManagerNamespace, Labels: map[string]string{discoveryv1.LabelServiceName: pv.Name}}, AddressType: discoveryv1.AddressTypeIPv4, Endpoints: []discoveryv1.Endpoint{{Addresses: []string{"10.42.0.5"}}}}
+	r, c := newReconciler(t, export, pvc, pv, shareManager, endpointSlice)
 	ctx := context.Background()
 	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
 		t.Fatal(err)
