@@ -24,8 +24,9 @@ NFS-Ganesha 3.3 and its upstream `/opt/start_nfs.sh`; the controller runs the
 pinned image with an explicit mounted configuration and rpcbind startup.
 
 The repository POC manifests and controller default now use this immutable
-Ganesha digest. No `REPLACE_WITH_PINNED_NFS_GANESHA_IMAGE` placeholder remains.
-PVC-name placeholders remain intentionally in static POC samples.
+Ganesha digest. The image is fully pinned in all committed samples and
+controller defaults. PVC-name placeholders remain intentionally in static POC
+samples.
 
 ## Render/apply
 
