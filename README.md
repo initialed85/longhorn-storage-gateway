@@ -75,9 +75,18 @@ privileged container. The controller default and samples pin Docker Hub's
 `sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b`.
 Set `spec.helper.nfsGaneshaImage` to a separately tested immutable digest (or
 `spec.helper.image` for the compatibility alias) before any non-disposable
-use. The generated Deployment uses `Recreate` so RWO replacement cannot overlap
-helpers. RWX still requires its independent share-manager/NFSv4-to-NFSv3
-acceptance gate.
+use. `spec.service.type` supports `ClusterIP`, `NodePort`, and `LoadBalancer`;
+NodePort/LoadBalancer handoff requires `spec.service.externalAddress` when no
+LoadBalancer ingress is assigned. The generated Deployment uses `Recreate` so
+RWO replacement cannot overlap helpers.
+
+For RWX, the controller discovers the Longhorn share-manager Service from the
+bound PV, waits for its NFS endpoint, and generates an FSAL_PROXY_V4 helper
+using the pinned proxy image
+`docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1`.
+If the share-manager disappears, controller-owned proxy resources are removed
+and recreated when the endpoint returns. This path still requires independent
+cluster/macOS acceptance before production support.
 
 A starting sample is in `config/samples/longhornnfsexport.yaml`; replace the
 PVC and image placeholders before applying it.

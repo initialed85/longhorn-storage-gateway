@@ -83,6 +83,9 @@ spec:
                     nfsGaneshaImage:
                       type: string
                       minLength: 1
+                    proxyImage:
+                      type: string
+                      minLength: 1
                     nodeSelector:
                       type: object
                       additionalProperties:
@@ -96,6 +99,16 @@ spec:
                       type: string
                       minLength: 1
                       maxLength: 63
+                    type:
+                      type: string
+                      enum:
+                        - ClusterIP
+                        - NodePort
+                        - LoadBalancer
+                      default: ClusterIP
+                    externalAddress:
+                      type: string
+                      minLength: 1
                     mountPort:
                       type: integer
                       format: int32
@@ -108,6 +121,16 @@ spec:
                       minimum: 1024
                       maximum: 65535
                       default: 2049
+                    mountNodePort:
+                      type: integer
+                      format: int32
+                      minimum: 30000
+                      maximum: 32767
+                    nfsNodePort:
+                      type: integer
+                      format: int32
+                      minimum: 30000
+                      maximum: 32767
                 networkPolicy:
                   type: object
                   properties:
@@ -193,6 +216,14 @@ spec:
                     nfsPort:
                       type: integer
                       format: int32
+                    mountNodePort:
+                      type: integer
+                      format: int32
+                    nfsNodePort:
+                      type: integer
+                      format: int32
+                    serviceType:
+                      type: string
                     generation:
                       type: string
                 helper:

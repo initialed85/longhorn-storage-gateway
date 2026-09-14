@@ -33,8 +33,14 @@ endpoint:
   export: /export
   version: 3
   mountPort: 20048
+  nfsPort: 2049
+  serviceType: ClusterIP
   generation: "7"
 ```
 
+For a controller-owned NodePort endpoint, `server` is the configured
+`spec.service.externalAddress`, `nfsPort`/`mountPort` are the allocated
+NodePorts, and `serviceType` is `NodePort`. A LoadBalancer endpoint uses its
+assigned ingress address unless `externalAddress` is explicitly configured.
 The status must not expose Longhorn's internal share endpoint as the maclet
 contract. Longhorn details belong only in controller diagnostics and Events.

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,133 @@ func TestReconcileCreatesDeterministicResourcesAndHandoff(t *testing.T) {
 	}
 }
 
+func TestNodePortEndpointIsPublishedOnlyWithReachableAddress(t *testing.T) {
+	export := testExport()
+	export.Spec.Service.Type = "NodePort"
+	export.Spec.Service.ExternalAddress = "192.168.1.114"
+	export.Spec.Service.NFSNodePort = 32049
+	export.Spec.Service.MountNodePort = 32050
+	pvc, pv := testPVCAndPV()
+	r, c := newReconciler(t, export, pvc, pv)
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	deployment.Status.ReadyReplicas, deployment.Status.AvailableReplicas = 1, 1
+	if err := c.Status().Update(ctx, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	var stored storagev1alpha1.LonghornNFSExport
+	if err := c.Get(ctx, client.ObjectKeyFromObject(export), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.Phase != storagev1alpha1.PhaseReady || stored.Status.Endpoint == nil || stored.Status.Endpoint.Server != "192.168.1.114" || stored.Status.Endpoint.NFSPort != 32049 || stored.Status.Endpoint.MountPort != 32050 {
+		t.Fatalf("unexpected NodePort status: %#v", stored.Status)
+	}
+}
+
+func TestRWXDiscoversShareManagerAndCreatesProxy(t *testing.T) {
+	export := testExport()
+	export.Spec.Mode = storagev1alpha1.ModeRWX
+	pvc, pv := testPVCAndPV()
+	pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	shareManager := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: pv.Name, Namespace: shareManagerNamespace, Labels: map[string]string{"longhorn.io/share-manager": pv.Name}}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.5", Ports: []corev1.ServicePort{{Name: "nfs", Port: defaultNFSPort}}}}
+	r, c := newReconciler(t, export, pvc, pv, shareManager)
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	if deployment.Spec.Template.Spec.Volumes[0].Name == "export" || deployment.Spec.Template.Spec.Containers[0].Image != defaultProxyImage {
+		t.Fatalf("unexpected proxy deployment: %#v", deployment.Spec.Template.Spec)
+	}
+	var config corev1.ConfigMap
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperConfigName(export)}, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config.Data["ganesha.conf"], "Name = PROXY_V4") || !strings.Contains(config.Data["ganesha.conf"], "10.43.0.5") || !strings.Contains(config.Data["ganesha.conf"], "/demo-pv") {
+		t.Fatalf("unexpected proxy config: %s", config.Data["ganesha.conf"])
+	}
+}
+
+func TestRWXShareManagerLossCleansProxyAndWaits(t *testing.T) {
+	export := testExport()
+	export.Spec.Mode = storagev1alpha1.ModeRWX
+	pvc, pv := testPVCAndPV()
+	pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	shareManager := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: pv.Name, Namespace: shareManagerNamespace, Labels: map[string]string{"longhorn.io/share-manager": pv.Name}}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.5", Ports: []corev1.ServicePort{{Name: "nfs", Port: defaultNFSPort}}}}
+	r, c := newReconciler(t, export, pvc, pv, shareManager)
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(ctx, shareManager); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(&deployment), &deployment); err == nil {
+		t.Fatal("proxy Deployment remained after share-manager loss")
+	}
+	var stored storagev1alpha1.LonghornNFSExport
+	if err := c.Get(ctx, client.ObjectKeyFromObject(export), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.Reason != "ShareManagerNotFound" {
+		t.Fatalf("unexpected status after share-manager loss: %#v", stored.Status)
+	}
+}
+
+func TestRWXWaitsForShareManagerWithoutCreatingProxy(t *testing.T) {
+	export := testExport()
+	export.Spec.Mode = storagev1alpha1.ModeRWX
+	pvc, pv := testPVCAndPV()
+	pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	r, c := newReconciler(t, export, pvc, pv)
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, requestFor(export)); err != nil {
+		t.Fatal(err)
+	}
+	var stored storagev1alpha1.LonghornNFSExport
+	if err := c.Get(ctx, client.ObjectKeyFromObject(export), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.Reason != "ShareManagerNotFound" || stored.Status.Phase != storagev1alpha1.PhasePending {
+		t.Fatalf("unexpected share-manager status: %#v", stored.Status)
+	}
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err == nil {
+		t.Fatal("proxy should not be created without a share-manager endpoint")
+	}
+}
+
 func TestRWORejectsAnotherConsumer(t *testing.T) {
 	export := testExport()
 	pvc, pv := testPVCAndPV()
@@ -144,6 +272,29 @@ func TestRWORejectsAnotherConsumer(t *testing.T) {
 	var deployment appsv1.Deployment
 	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err == nil {
 		t.Fatal("helper should not be created while RWO PVC has another consumer")
+	}
+}
+
+func TestFinalizeRefusesUnownedHelperAndPreservesPVC(t *testing.T) {
+	export := testExport()
+	export.Finalizers = []string{storagev1alpha1.Finalizer}
+	now := metav1.NewTime(time.Now())
+	export.DeletionTimestamp = &now
+	pvc, pv := testPVCAndPV()
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(export), Namespace: export.Namespace}}
+	r, c := newReconciler(t, export, pvc, pv, service)
+	_, err := r.Reconcile(context.Background(), requestFor(export))
+	if err == nil {
+		t.Fatal("expected cleanup failure for unowned Service")
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), pvc); err != nil {
+		t.Fatalf("PVC was unexpectedly deleted: %v", err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pv), pv); err != nil {
+		t.Fatalf("PV was unexpectedly deleted: %v", err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(service), service); err != nil {
+		t.Fatalf("unowned Service was deleted: %v", err)
 	}
 }
 

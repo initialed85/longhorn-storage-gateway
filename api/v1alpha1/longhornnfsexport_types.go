@@ -47,14 +47,19 @@ type PVCReference struct {
 type HelperSpec struct {
 	Image              string            `json:"image,omitempty"`
 	NFSGaneshaImage    string            `json:"nfsGaneshaImage,omitempty"`
+	ProxyImage         string            `json:"proxyImage,omitempty"`
 	NodeSelector       map[string]string `json:"nodeSelector,omitempty"`
 	ServiceAccountName string            `json:"serviceAccountName,omitempty"`
 }
 
 type ServiceSpec struct {
-	Name      string `json:"name,omitempty"`
-	MountPort int32  `json:"mountPort,omitempty"`
-	NFSPort   int32  `json:"nfsPort,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Type            string `json:"type,omitempty"`
+	ExternalAddress string `json:"externalAddress,omitempty"`
+	MountPort       int32  `json:"mountPort,omitempty"`
+	NFSPort         int32  `json:"nfsPort,omitempty"`
+	MountNodePort   int32  `json:"mountNodePort,omitempty"`
+	NFSNodePort     int32  `json:"nfsNodePort,omitempty"`
 }
 
 type NetworkPolicySpec struct {
@@ -78,12 +83,15 @@ type LonghornNFSExportStatus struct {
 }
 
 type EndpointStatus struct {
-	Server     string `json:"server,omitempty"`
-	Export     string `json:"export,omitempty"`
-	Version    int32  `json:"version,omitempty"`
-	MountPort  int32  `json:"mountPort,omitempty"`
-	NFSPort    int32  `json:"nfsPort,omitempty"`
-	Generation string `json:"generation,omitempty"`
+	Server        string `json:"server,omitempty"`
+	Export        string `json:"export,omitempty"`
+	Version       int32  `json:"version,omitempty"`
+	MountPort     int32  `json:"mountPort,omitempty"`
+	NFSPort       int32  `json:"nfsPort,omitempty"`
+	MountNodePort int32  `json:"mountNodePort,omitempty"`
+	NFSNodePort   int32  `json:"nfsNodePort,omitempty"`
+	ServiceType   string `json:"serviceType,omitempty"`
+	Generation    string `json:"generation,omitempty"`
 }
 
 type HelperStatus struct {

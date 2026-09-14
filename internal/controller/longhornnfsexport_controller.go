@@ -31,6 +31,9 @@ import (
 const (
 	longhornDriver               = "driver.longhorn.io"
 	defaultNFSGaneshaImage       = "docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b"
+	defaultProxyImage            = "docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1"
+	defaultServiceType           = "ClusterIP"
+	shareManagerNamespace        = "longhorn-system"
 	defaultMountPort       int32 = 20048
 	defaultNFSPort         int32 = 2049
 	defaultExportPath            = "/export"
@@ -56,6 +59,7 @@ func (r *LonghornNFSExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(r.mapPVC)).
 		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.mapPV)).
+		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.mapShareManagerService)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPod)).
 		Complete(r)
 }
@@ -109,14 +113,31 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhasePending, "PVNotFound", message, pendingConditions("PVNotFound", message), nil, nil)
 	}
 
-	resources, err := r.ensureResources(ctx, &export)
+	var backend *shareManagerEndpoint
+	if export.Spec.Mode == storagev1alpha1.ModeRWX {
+		backend, reason, message, err = r.findShareManager(ctx, pv)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if backend == nil {
+			if cleanupErr := r.cleanupManagedResources(ctx, &export); cleanupErr != nil {
+				return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "CleanupFailed", cleanupErr.Error(), pendingConditions("CleanupFailed", cleanupErr.Error()), nil, nil)
+			}
+			values := pendingConditions(reason, message)
+			values[storagev1alpha1.ConditionPVCBound] = conditionValue{metav1.ConditionTrue, "Bound", "PVC is Bound to a Longhorn volume"}
+			return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhasePending, reason, message, values, nil, nil)
+		}
+	}
+
+	resources, err := r.ensureResources(ctx, &export, backend)
 	if err != nil {
 		message := fmt.Sprintf("ensuring gateway resources: %v", err)
 		return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "ResourceError", message, pendingConditions("ResourceError", message), nil, nil)
 	}
 
 	helperReady := resources.deployment.Status.ReadyReplicas >= 1 && resources.deployment.Status.AvailableReplicas >= 1
-	endpointReady := helperReady && serviceEndpointReady(resources.service, resources.mountPort, resources.nfsPort)
+	endpointServer, endpointMountPort, endpointNFSPort, endpointReady := endpointForService(&export, resources.service, resources.mountPort, resources.nfsPort)
+	endpointReady = helperReady && endpointReady
 	helperStatus := &storagev1alpha1.HelperStatus{
 		Name:           resources.deployment.Name,
 		ServiceName:    resources.service.Name,
@@ -127,12 +148,15 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	var endpoint *storagev1alpha1.EndpointStatus
 	if endpointReady {
 		endpoint = &storagev1alpha1.EndpointStatus{
-			Server:     resources.service.Spec.ClusterIP,
-			Export:     defaultExportPath,
-			Version:    3,
-			MountPort:  resources.mountPort,
-			NFSPort:    resources.nfsPort,
-			Generation: strconv.FormatInt(export.Generation, 10),
+			Server:        endpointServer,
+			Export:        defaultExportPath,
+			Version:       3,
+			MountPort:     endpointMountPort,
+			NFSPort:       endpointNFSPort,
+			MountNodePort: resources.service.Spec.Ports[1].NodePort,
+			NFSNodePort:   resources.service.Spec.Ports[0].NodePort,
+			ServiceType:   string(resources.service.Spec.Type),
+			Generation:    strconv.FormatInt(export.Generation, 10),
 		}
 	}
 
@@ -150,7 +174,7 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			storagev1alpha1.ConditionPVCBound:           conditionValue{metav1.ConditionTrue, "Bound", "PVC is Bound to a Longhorn volume"},
 			storagev1alpha1.ConditionProtocolCompatible: conditionValue{metav1.ConditionTrue, "Supported", "NFSv3 is supported"},
 			storagev1alpha1.ConditionHelperReady:        conditionValue{metav1.ConditionTrue, "Ready", "NFS helper Deployment has a Ready replica"},
-			storagev1alpha1.ConditionEndpointReady:      conditionValue{metav1.ConditionTrue, "Ready", "Service has a ClusterIP and the helper is Ready"},
+			storagev1alpha1.ConditionEndpointReady:      conditionValue{metav1.ConditionTrue, "Ready", "Service endpoint and helper are Ready"},
 			storagev1alpha1.ConditionCleanup:            conditionValue{metav1.ConditionTrue, "Active", "controller-owned resources are tracked by the finalizer"},
 		}
 		return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseReady, "Ready", "NFSv3 endpoint is ready", conditions, endpoint, helperStatus)
@@ -167,6 +191,11 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhasePending, "WaitingForReady", message, conditions, endpoint, helperStatus)
 }
 
+type shareManagerEndpoint struct {
+	Server string
+	Path   string
+}
+
 type managedResources struct {
 	deployment *appsv1.Deployment
 	service    *corev1.Service
@@ -174,7 +203,7 @@ type managedResources struct {
 	nfsPort    int32
 }
 
-func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, export *storagev1alpha1.LonghornNFSExport) (managedResources, error) {
+func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, export *storagev1alpha1.LonghornNFSExport, backend *shareManagerEndpoint) (managedResources, error) {
 	mountPort, nfsPort := portsFor(export)
 	labelsFor := resourceLabels(export)
 	owner := func(obj client.Object) error { return controllerutil.SetControllerReference(export, obj, r.Scheme) }
@@ -182,7 +211,7 @@ func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, expor
 	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: helperConfigName(export), Namespace: export.Namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, config, func() error {
 		config.Labels = labelsFor
-		config.Data = map[string]string{"ganesha.conf": ganeshaConfig(mountPort, nfsPort)}
+		config.Data = map[string]string{"ganesha.conf": ganeshaConfig(export, mountPort, nfsPort, backend)}
 		return owner(config)
 	})
 	if err != nil {
@@ -191,7 +220,7 @@ func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, expor
 
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: helperName(export), Namespace: export.Namespace}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
-		want := desiredDeployment(export, labelsFor, mountPort, nfsPort)
+		want := desiredDeployment(export, labelsFor, mountPort, nfsPort, backend)
 		deployment.Labels = want.Labels
 		deployment.Spec = want.Spec
 		return owner(deployment)
@@ -204,6 +233,17 @@ func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, expor
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
 		clusterIP, clusterIPs, ipFamilies, ipFamilyPolicy := service.Spec.ClusterIP, service.Spec.ClusterIPs, service.Spec.IPFamilies, service.Spec.IPFamilyPolicy
 		want := desiredService(export, labelsFor, mountPort, nfsPort)
+		for i := range want.Spec.Ports {
+			if want.Spec.Ports[i].NodePort != 0 {
+				continue
+			}
+			for _, oldPort := range service.Spec.Ports {
+				if oldPort.Name == want.Spec.Ports[i].Name {
+					want.Spec.Ports[i].NodePort = oldPort.NodePort
+					break
+				}
+			}
+		}
 		service.Labels = want.Labels
 		service.Spec = want.Spec
 		service.Spec.ClusterIP, service.Spec.ClusterIPs, service.Spec.IPFamilies, service.Spec.IPFamilyPolicy = clusterIP, clusterIPs, ipFamilies, ipFamilyPolicy
@@ -272,13 +312,34 @@ func portsFor(e *storagev1alpha1.LonghornNFSExport) (int32, int32) {
 	return mountPort, nfsPort
 }
 
-func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[string]string, mountPort, nfsPort int32) *appsv1.Deployment {
+func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[string]string, mountPort, nfsPort int32, backend *shareManagerEndpoint) *appsv1.Deployment {
 	image := e.Spec.Helper.NFSGaneshaImage
-	if image == "" {
-		image = e.Spec.Helper.Image
+	if e.Spec.Mode == storagev1alpha1.ModeRWX {
+		image = e.Spec.Helper.ProxyImage
+		if image == "" {
+			image = defaultProxyImage
+		}
+	} else {
+		if image == "" {
+			image = e.Spec.Helper.Image
+		}
+		if image == "" {
+			image = defaultNFSGaneshaImage
+		}
 	}
-	if image == "" {
-		image = defaultNFSGaneshaImage
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "ganesha-config", MountPath: "/etc/ganesha-config", ReadOnly: true},
+		{Name: "ganesha-run", MountPath: "/var/run/ganesha"},
+		{Name: "ganesha-state", MountPath: "/var/lib/nfs"},
+	}
+	volumes := []corev1.Volume{
+		{Name: "ganesha-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: helperConfigName(e)}}}},
+		{Name: "ganesha-run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "ganesha-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+	if e.Spec.Mode != storagev1alpha1.ModeRWX {
+		volumeMounts = append([]corev1.VolumeMount{{Name: "export", MountPath: defaultExportPath}}, volumeMounts...)
+		volumes = append([]corev1.Volume{{Name: "export", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.Spec.PVCRef.Name}}}}, volumes...)
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -289,7 +350,7 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector: &metav1.LabelSelector{MatchLabels: labelsFor},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labelsFor},
+				ObjectMeta: metav1.ObjectMeta{Labels: labelsFor, Annotations: map[string]string{"storage.k8s-darwin.dev/config-hash": getStringHash(ganeshaConfig(e, mountPort, nfsPort, backend))}},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            e.Spec.Helper.ServiceAccountName,
 					NodeSelector:                  e.Spec.Helper.NodeSelector,
@@ -310,19 +371,9 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 						LivenessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("nfs")}}, InitialDelaySeconds: 10, PeriodSeconds: 10,
 						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "export", MountPath: defaultExportPath},
-							{Name: "ganesha-config", MountPath: "/etc/ganesha-config", ReadOnly: true},
-							{Name: "ganesha-run", MountPath: "/var/run/ganesha"},
-							{Name: "ganesha-state", MountPath: "/var/lib/nfs"},
-						},
+						VolumeMounts: volumeMounts,
 					}},
-					Volumes: []corev1.Volume{
-						{Name: "export", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.Spec.PVCRef.Name}}},
-						{Name: "ganesha-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: helperConfigName(e)}}}},
-						{Name: "ganesha-run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{Name: "ganesha-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-					},
+					Volumes: volumes,
 				},
 			},
 		},
@@ -330,7 +381,11 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 }
 
 func desiredService(e *storagev1alpha1.LonghornNFSExport, labelsFor map[string]string, mountPort, nfsPort int32) *corev1.Service {
-	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(e), Namespace: e.Namespace, Labels: labelsFor}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labelsFor, Ports: []corev1.ServicePort{{Name: "nfs", Protocol: corev1.ProtocolTCP, Port: nfsPort, TargetPort: intstr.FromString("nfs")}, {Name: "mountd", Protocol: corev1.ProtocolTCP, Port: mountPort, TargetPort: intstr.FromString("mountd")}}}}
+	typeValue := e.Spec.Service.Type
+	if typeValue == "" {
+		typeValue = defaultServiceType
+	}
+	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(e), Namespace: e.Namespace, Labels: labelsFor}, Spec: corev1.ServiceSpec{Type: corev1.ServiceType(typeValue), Selector: labelsFor, Ports: []corev1.ServicePort{{Name: "nfs", Protocol: corev1.ProtocolTCP, Port: nfsPort, TargetPort: intstr.FromString("nfs"), NodePort: e.Spec.Service.NFSNodePort}, {Name: "mountd", Protocol: corev1.ProtocolTCP, Port: mountPort, TargetPort: intstr.FromString("mountd"), NodePort: e.Spec.Service.MountNodePort}}}}
 }
 
 func desiredNetworkPolicy(e *storagev1alpha1.LonghornNFSExport, labelsFor map[string]string, mountPort, nfsPort int32) *networkingv1.NetworkPolicy {
@@ -342,7 +397,37 @@ func desiredNetworkPolicy(e *storagev1alpha1.LonghornNFSExport, labelsFor map[st
 	return &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: policyName(e), Namespace: e.Namespace, Labels: labelsFor}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: labelsFor}, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, Ingress: []networkingv1.NetworkPolicyIngressRule{{From: from, Ports: ports}}}}
 }
 
-func ganeshaConfig(mountPort, nfsPort int32) string {
+func ganeshaConfig(e *storagev1alpha1.LonghornNFSExport, mountPort, nfsPort int32, backend *shareManagerEndpoint) string {
+	if e.Spec.Mode == storagev1alpha1.ModeRWX && backend != nil {
+		return fmt.Sprintf(`NFS_CORE_PARAM {
+  NFS_Protocols = 3;
+  NFS_Port = %d;
+  MNT_Port = %d;
+  Bind_Addr = 0.0.0.0;
+  Enable_UDP = False;
+  Enable_NLM = false;
+  Enable_RQUOTA = false;
+  Clustered = false;
+  mount_path_pseudo = true;
+}
+EXPORT_DEFAULTS {
+  Access_Type = RW;
+  Squash = No_Root_Squash;
+  Protocols = 3;
+  Transports = TCP;
+}
+EXPORT {
+  Export_Id = 77;
+  Path = %s;
+  Pseudo = /export;
+  Access_Type = RW;
+  Squash = No_Root_Squash;
+  Protocols = 3;
+  Transports = TCP;
+  FSAL { Name = PROXY_V4; Srv_Addr = %s; NFS_Port = 2049; Use_Privileged_Client_Port = true; }
+}
+`, nfsPort, mountPort, backend.Path, backend.Server)
+	}
 	return fmt.Sprintf(`NFS_CORE_PARAM {
   NFS_Protocols = 3;
   NFS_Port = %d;
@@ -413,6 +498,50 @@ func hasAccessMode(modes []corev1.PersistentVolumeAccessMode, wanted corev1.Pers
 		}
 	}
 	return false
+}
+
+func (r *LonghornNFSExportReconciler) findShareManager(ctx context.Context, pv *corev1.PersistentVolume) (*shareManagerEndpoint, string, string, error) {
+	service := &corev1.Service{}
+	key := types.NamespacedName{Namespace: shareManagerNamespace, Name: pv.Name}
+	if err := r.Get(ctx, key, service); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, "ShareManagerReadError", err.Error(), err
+		}
+		var services corev1.ServiceList
+		if listErr := r.List(ctx, &services, client.InNamespace(shareManagerNamespace), client.MatchingLabels{"longhorn.io/share-manager": pv.Name}); listErr != nil {
+			return nil, "ShareManagerReadError", listErr.Error(), listErr
+		}
+		if len(services.Items) == 0 {
+			return nil, "ShareManagerNotFound", fmt.Sprintf("Longhorn share-manager Service for PV %s is not present", pv.Name), nil
+		}
+		service = &services.Items[0]
+	}
+	if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
+		return nil, "ShareManagerPending", fmt.Sprintf("share-manager Service %s/%s has no ClusterIP", service.Namespace, service.Name), nil
+	}
+	for _, port := range service.Spec.Ports {
+		if port.Port == defaultNFSPort {
+			return &shareManagerEndpoint{Server: service.Spec.ClusterIP, Path: "/" + pv.Name}, "", "", nil
+		}
+	}
+	return nil, "ShareManagerPortMissing", fmt.Sprintf("share-manager Service %s/%s has no NFS port", service.Namespace, service.Name), nil
+}
+
+func (r *LonghornNFSExportReconciler) mapShareManagerService(ctx context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetNamespace() != shareManagerNamespace {
+		return nil
+	}
+	var exports storagev1alpha1.LonghornNFSExportList
+	if err := r.List(ctx, &exports); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0)
+	for i := range exports.Items {
+		if exports.Items[i].Spec.Mode == storagev1alpha1.ModeRWX {
+			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: exports.Items[i].Namespace, Name: exports.Items[i].Name}})
+		}
+	}
+	return requests
 }
 
 func (r *LonghornNFSExportReconciler) mapPVC(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -524,20 +653,55 @@ func ownedResourceByExport(obj metav1.Object, e *storagev1alpha1.LonghornNFSExpo
 	return false
 }
 
-func serviceEndpointReady(service *corev1.Service, mountPort, nfsPort int32) bool {
-	if service == nil || service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone || len(service.Spec.Ports) != 2 {
-		return false
+func endpointForService(e *storagev1alpha1.LonghornNFSExport, service *corev1.Service, mountPort, nfsPort int32) (string, int32, int32, bool) {
+	if service == nil || len(service.Spec.Ports) != 2 {
+		return "", 0, 0, false
 	}
 	seenNFS, seenMountd := false, false
+	var nfsNodePort, mountNodePort int32
 	for _, port := range service.Spec.Ports {
 		switch port.Name {
 		case "nfs":
 			seenNFS = port.Protocol == corev1.ProtocolTCP && port.Port == nfsPort && port.TargetPort == intstr.FromString("nfs")
+			nfsNodePort = port.NodePort
 		case "mountd":
 			seenMountd = port.Protocol == corev1.ProtocolTCP && port.Port == mountPort && port.TargetPort == intstr.FromString("mountd")
+			mountNodePort = port.NodePort
 		}
 	}
-	return seenNFS && seenMountd
+	if !seenNFS || !seenMountd {
+		return "", 0, 0, false
+	}
+	typeValue := e.Spec.Service.Type
+	if typeValue == "" {
+		typeValue = defaultServiceType
+	}
+	switch corev1.ServiceType(typeValue) {
+	case corev1.ServiceTypeClusterIP:
+		if service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone {
+			return "", 0, 0, false
+		}
+		return service.Spec.ClusterIP, mountPort, nfsPort, true
+	case corev1.ServiceTypeNodePort:
+		if e.Spec.Service.ExternalAddress == "" || nfsNodePort == 0 || mountNodePort == 0 {
+			return "", 0, 0, false
+		}
+		return e.Spec.Service.ExternalAddress, mountNodePort, nfsNodePort, true
+	case corev1.ServiceTypeLoadBalancer:
+		server := e.Spec.Service.ExternalAddress
+		if server == "" && len(service.Status.LoadBalancer.Ingress) > 0 {
+			server = service.Status.LoadBalancer.Ingress[0].IP
+			if server == "" {
+				server = service.Status.LoadBalancer.Ingress[0].Hostname
+			}
+		}
+		if server == "" {
+			return "", 0, 0, false
+		}
+		return server, mountPort, nfsPort, true
+	default:
+		return "", 0, 0, false
+	}
 }
 
 func networkPolicyEnabled(e *storagev1alpha1.LonghornNFSExport) bool {
@@ -591,7 +755,7 @@ func removeHandoffAnnotations(pod *corev1.Pod) {
 
 func (r *LonghornNFSExportReconciler) finalize(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) (ctrl.Result, error) {
 	if err := r.updateHandoff(ctx, e, nil); err != nil {
-		return ctrl.Result{}, r.setStatus(ctx, e, storagev1alpha1.PhaseDegraded, "CleanupFailed", err.Error(), pendingConditions("CleanupFailed", err.Error()), nil, nil)
+		return ctrl.Result{}, r.cleanupFailure(ctx, e, err)
 	}
 	resources := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: helperName(e), Namespace: e.Namespace}},
@@ -601,11 +765,34 @@ func (r *LonghornNFSExportReconciler) finalize(ctx context.Context, e *storagev1
 	}
 	for _, obj := range resources {
 		if err := r.deleteOwned(ctx, e, obj); err != nil {
-			return ctrl.Result{}, r.setStatus(ctx, e, storagev1alpha1.PhaseDegraded, "CleanupFailed", err.Error(), pendingConditions("CleanupFailed", err.Error()), nil, nil)
+			return ctrl.Result{}, r.cleanupFailure(ctx, e, err)
 		}
 	}
 	controllerutil.RemoveFinalizer(e, storagev1alpha1.Finalizer)
 	return ctrl.Result{}, r.Update(ctx, e)
+}
+
+func (r *LonghornNFSExportReconciler) cleanupFailure(ctx context.Context, e *storagev1alpha1.LonghornNFSExport, cleanupErr error) error {
+	statusErr := r.setStatus(ctx, e, storagev1alpha1.PhaseDegraded, "CleanupFailed", cleanupErr.Error(), pendingConditions("CleanupFailed", cleanupErr.Error()), nil, nil)
+	if statusErr != nil {
+		return fmt.Errorf("%v (also failed to update status: %w)", cleanupErr, statusErr)
+	}
+	return cleanupErr
+}
+
+func (r *LonghornNFSExportReconciler) cleanupManagedResources(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) error {
+	resources := []client.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: helperName(e), Namespace: e.Namespace}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(e), Namespace: e.Namespace}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: helperConfigName(e), Namespace: e.Namespace}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: policyName(e), Namespace: e.Namespace}},
+	}
+	for _, obj := range resources {
+		if err := r.deleteOwned(ctx, e, obj); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *LonghornNFSExportReconciler) deleteOwned(ctx context.Context, e *storagev1alpha1.LonghornNFSExport, obj client.Object) error {
