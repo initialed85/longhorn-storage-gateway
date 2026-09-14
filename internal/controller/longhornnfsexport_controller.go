@@ -55,6 +55,7 @@ func (r *LonghornNFSExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(r.mapPVC)).
+		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.mapPV)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.mapPod)).
 		Complete(r)
 }
@@ -409,6 +410,33 @@ func (r *LonghornNFSExportReconciler) mapPVC(ctx context.Context, obj client.Obj
 	for i := range exports.Items {
 		if exports.Items[i].Spec.PVCRef.Name == obj.GetName() {
 			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: exports.Items[i].Namespace, Name: exports.Items[i].Name}})
+		}
+	}
+	return requests
+}
+
+func (r *LonghornNFSExportReconciler) mapPV(ctx context.Context, obj client.Object) []reconcile.Request {
+	pv, ok := obj.(*corev1.PersistentVolume)
+	if !ok {
+		return nil
+	}
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := r.List(ctx, &pvcs); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0)
+	for i := range pvcs.Items {
+		if pvcs.Items[i].Spec.VolumeName != pv.Name {
+			continue
+		}
+		var exports storagev1alpha1.LonghornNFSExportList
+		if err := r.List(ctx, &exports, client.InNamespace(pvcs.Items[i].Namespace)); err != nil {
+			continue
+		}
+		for j := range exports.Items {
+			if exports.Items[j].Spec.PVCRef.Name == pvcs.Items[i].Name {
+				requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: exports.Items[j].Namespace, Name: exports.Items[j].Name}})
+			}
 		}
 	}
 	return requests
