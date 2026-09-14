@@ -27,7 +27,7 @@ spec:
           image: REPLACE_WITH_PINNED_NFS_GANESHA_IMAGE
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
-          args: ["ln -sf /proc/mounts /etc/mtab && exec ganesha.nfsd -F -L STDOUT -f /etc/ganesha-config/ganesha.conf"]
+          args: ["ln -sf /proc/mounts /etc/mtab && mkdir -p /run/rpcbind && rpcbind -f -w & exec ganesha.nfsd -F -L STDOUT -f /etc/ganesha-config/ganesha.conf"]
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
