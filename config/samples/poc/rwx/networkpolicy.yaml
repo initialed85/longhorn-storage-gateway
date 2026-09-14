@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: longhorn-nfs-gateway
+  labels:
+    storage.k8s-darwin.dev/poc: longhorn-nfs-gateway
+    storage.k8s-darwin.dev/mode: rwx
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: longhorn-nfs-gateway
+      storage.k8s-darwin.dev/mode: rwx
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 2049
+        - protocol: TCP
+          port: 20048

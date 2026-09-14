@@ -1,0 +1,210 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: longhornnfsexports.storage.k8s-darwin.dev
+spec:
+  group: storage.k8s-darwin.dev
+  scope: Namespaced
+  names:
+    plural: longhornnfsexports
+    singular: longhornnfsexport
+    kind: LonghornNFSExport
+    shortNames:
+      - lhnfs
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: PVC
+          type: string
+          jsonPath: .spec.pvcRef.name
+        - name: Mode
+          type: string
+          jsonPath: .spec.mode
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Endpoint
+          type: string
+          jsonPath: .status.endpoint.server
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - pvcRef
+                - mode
+                - protocol
+              properties:
+                pvcRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                mode:
+                  type: string
+                  enum:
+                    - RWO
+                    - RWX
+                protocol:
+                  type: string
+                  enum:
+                    - NFSv3
+                mountOptions:
+                  type: array
+                  maxItems: 16
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                helper:
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                      minLength: 1
+                    nfsGaneshaImage:
+                      type: string
+                      minLength: 1
+                    nodeSelector:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    serviceAccountName:
+                      type: string
+                service:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    mountPort:
+                      type: integer
+                      format: int32
+                      minimum: 1024
+                      maximum: 65535
+                      default: 20048
+                    nfsPort:
+                      type: integer
+                      format: int32
+                      minimum: 1024
+                      maximum: 65535
+                      default: 2049
+                networkPolicy:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                    allowedCIDRs:
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: string
+                        minLength: 1
+                handoff:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                    nativePodSelector:
+                      type: object
+                      additionalProperties:
+                        type: string
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - Ready
+                    - Degraded
+                    - Error
+                reason:
+                  type: string
+                message:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - lastTransitionTime
+                      - reason
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                endpoint:
+                  type: object
+                  properties:
+                    server:
+                      type: string
+                    export:
+                      type: string
+                    version:
+                      type: integer
+                      format: int32
+                      enum:
+                        - 3
+                    mountPort:
+                      type: integer
+                      format: int32
+                    nfsPort:
+                      type: integer
+                      format: int32
+                    generation:
+                      type: string
+                helper:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    serviceName:
+                      type: string
+                    ready:
+                      type: boolean
+                    observedPVCUID:
+                      type: string
+                    observedPVName:
+                      type: string

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-nfs-ganesha
+  labels:
+    storage.k8s-darwin.dev/poc: longhorn-nfs-gateway
+    storage.k8s-darwin.dev/mode: rwx
+data:
+  ganesha.conf: |
+    NFS_CORE_PARAM {
+      Protocols = 3;
+      NFS_Port = 2049;
+      MNT_Port = 20048;
+      Bind_Addr = 0.0.0.0;
+    }
+    EXPORT_DEFAULTS {
+      Access_Type = RW;
+      Squash = No_Root_Squash;
+      Protocols = 3;
+      Transports = TCP;
+    }
+    EXPORT {
+      Export_Id = 1;
+      Path = /export;
+      Pseudo = /export;
+      Access_Type = RW;
+      Squash = No_Root_Squash;
+      Protocols = 3;
+      Transports = TCP;
+      FSAL { Name = VFS; }
+    }
