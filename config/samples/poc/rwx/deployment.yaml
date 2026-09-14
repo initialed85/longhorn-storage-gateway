@@ -24,7 +24,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: nfs-ganesha
-          image: REPLACE_WITH_PINNED_NFS_GANESHA_IMAGE
+          image: docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args: ["ln -sf /proc/mounts /etc/mtab && mkdir -p /run/rpcbind && rpcbind -f -w & exec ganesha.nfsd -F -L STDOUT -f /etc/ganesha-config/ganesha.conf"]

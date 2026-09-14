@@ -30,7 +30,7 @@ import (
 
 const (
 	longhornDriver               = "driver.longhorn.io"
-	defaultNFSGaneshaImage       = "ghcr.io/initialed85/longhorn-nfs-gateway-ganesha:4.3"
+	defaultNFSGaneshaImage       = "docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b"
 	defaultMountPort       int32 = 20048
 	defaultNFSPort         int32 = 2049
 	defaultExportPath            = "/export"

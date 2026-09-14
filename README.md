@@ -68,7 +68,10 @@ resources; its complete RBAC is in `config/rbac/`. A `LonghornNFSExport` never
 creates or deletes a PVC/PV.
 
 The generated helper currently runs the selected NFS-Ganesha image as a
-privileged container. Set `spec.helper.nfsGaneshaImage` to a tested digest (or
+privileged container. The controller default and samples pin Docker Hub's
+`longhornio/nfs-ganesha:latest` (Ganesha 3.3) to manifest digest
+`sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b`.
+Set `spec.helper.nfsGaneshaImage` to a separately tested immutable digest (or
 `spec.helper.image` for the compatibility alias) before any non-disposable
 use. The generated Deployment uses `Recreate` so RWO replacement cannot overlap
 helpers. RWX still requires its independent share-manager/NFSv4-to-NFSv3

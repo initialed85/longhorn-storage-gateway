@@ -10,8 +10,8 @@ spec:
   mode: RWO
   protocol: NFSv3
   helper:
-    # Pin a tested image digest before applying outside development.
-    nfsGaneshaImage: replace-with-pinned-nfs-ganesha-image
+    # Docker Hub longhornio/nfs-ganesha:latest, pinned to its multi-arch manifest digest.
+    nfsGaneshaImage: docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b
   handoff:
     enabled: true
     nativePodSelector:
