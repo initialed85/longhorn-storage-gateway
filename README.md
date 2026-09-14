@@ -5,10 +5,11 @@ workloads through a generic NFS endpoint. This repository deliberately keeps
 Longhorn-specific discovery and helper lifecycle out of maclet. Maclet consumes
 only the generic handoff contract documented in [`docs/handoff.md`](docs/handoff.md).
 
-> **Status: design/POC.** The `v1alpha1` API contract and manual helper POC
-> manifests are present. The controller, macOS NFSv3 validation, and production
-> readiness gates are not complete. Do not advertise Longhorn gateway support in
-> a Macgrubernetes release yet.
+> **Status: controller baseline / POC.** The `v1alpha1` API contract, a
+> controller implementation, focused reconciliation tests, and manual helper
+> POC manifests are present. macOS NFSv3 validation, failure-injection tests,
+> image release, and production readiness gates are not complete. Do not
+> advertise Longhorn gateway support in a Macgrubernetes release yet.
 
 ## Design boundary
 
@@ -50,6 +51,30 @@ A handoff is published only after the helper is Ready and the endpoint has
 passed controller-side checks. Maclet must treat missing, incomplete, stale, or
 unreachable handoffs as Pending. The handoff mechanism is not an admission
 webhook and does not mutate Pod specs or volumes.
+
+## Controller deployment
+
+The controller and CRD can be rendered with:
+
+```sh
+kubectl kustomize deploy
+```
+
+Before applying, replace the controller image in `config/manager/deployment.yaml`
+with a release digest. The controller requires cluster-scoped read access to
+Longhorn-backed PVs and namespaced access to the explicitly managed helper
+resources; its complete RBAC is in `config/rbac/`. A `LonghornNFSExport` never
+creates or deletes a PVC/PV.
+
+The generated helper currently runs the selected NFS-Ganesha image as a
+privileged container. Set `spec.helper.nfsGaneshaImage` to a tested digest (or
+`spec.helper.image` for the compatibility alias) before any non-disposable
+use. The generated Deployment uses `Recreate` so RWO replacement cannot overlap
+helpers. RWX still requires its independent share-manager/NFSv4-to-NFSv3
+acceptance gate.
+
+A starting sample is in `config/samples/longhornnfsexport.yaml`; replace the
+PVC and image placeholders before applying it.
 
 ## Manual POC
 

@@ -1,0 +1,18 @@
+apiVersion: storage.k8s-darwin.dev/v1alpha1
+kind: LonghornNFSExport
+metadata:
+  name: example
+  namespace: default
+spec:
+  pvcRef:
+    name: replace-with-longhorn-pvc
+  # Use RWX only for a Longhorn share-manager PVC; it is a separate acceptance path.
+  mode: RWO
+  protocol: NFSv3
+  helper:
+    # Pin a tested image digest before applying outside development.
+    nfsGaneshaImage: replace-with-pinned-nfs-ganesha-image
+  handoff:
+    enabled: true
+    nativePodSelector:
+      storage.k8s-darwin.dev/native: "true"
