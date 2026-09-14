@@ -8,10 +8,10 @@ only the generic handoff contract documented in [`docs/handoff.md`](docs/handoff
 > **Status: controller baseline / acceptance in progress.** The `v1alpha1` API
 > contract, controller implementation, focused reconciliation tests, manual
 > helper POC manifests, and pinned multi-architecture acceptance images are
-> present. The home-dev RWO NodePort gate passed; the controller's direct VFS
-> RWX NFSv4-to-v3 path is blocked, while an independent FSAL_PROXY_V4 prototype
-> passed and is not yet integrated. See the latest follow-up at
-> [`docs/acceptance/home-dev-nodeport-proxy-20260915.md`](docs/acceptance/home-dev-nodeport-proxy-20260915.md).
+> present. The home-dev controller-owned RWO NodePort and RWX FSAL_PROXY_V4
+> prototype gates passed; production release still requires broader failure and
+> integration validation. See the latest controller-owned follow-up at
+> [`docs/acceptance/home-dev-controller-owned-20260915.md`](docs/acceptance/home-dev-controller-owned-20260915.md).
 > Do not advertise Longhorn gateway support in a Macgrubernetes release yet.
 
 ## Design boundary
