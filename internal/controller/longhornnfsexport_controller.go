@@ -344,10 +344,14 @@ func desiredNetworkPolicy(e *storagev1alpha1.LonghornNFSExport, labelsFor map[st
 
 func ganeshaConfig(mountPort, nfsPort int32) string {
 	return fmt.Sprintf(`NFS_CORE_PARAM {
-  Protocols = 3;
+  NFS_Protocols = 3;
   NFS_Port = %d;
   MNT_Port = %d;
   Bind_Addr = 0.0.0.0;
+  Enable_UDP = False;
+  Enable_NLM = false;
+  Enable_RQUOTA = false;
+  Clustered = false;
 }
 EXPORT_DEFAULTS {
   Access_Type = RW;

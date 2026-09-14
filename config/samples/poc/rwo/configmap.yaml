@@ -8,10 +8,14 @@ metadata:
 data:
   ganesha.conf: |
     NFS_CORE_PARAM {
-      Protocols = 3;
+      NFS_Protocols = 3;
       NFS_Port = 2049;
       MNT_Port = 20048;
       Bind_Addr = 0.0.0.0;
+      Enable_UDP = False;
+      Enable_NLM = false;
+      Enable_RQUOTA = false;
+      Clustered = false;
     }
     EXPORT_DEFAULTS {
       Access_Type = RW;
