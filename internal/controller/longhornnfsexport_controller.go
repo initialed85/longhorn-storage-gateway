@@ -136,7 +136,11 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	if err := r.updateHandoff(ctx, &export, endpoint); err != nil {
+	handoffEndpoint := endpoint
+	if !handoffEnabled(&export) {
+		handoffEndpoint = nil
+	}
+	if err := r.updateHandoff(ctx, &export, handoffEndpoint); err != nil {
 		message := fmt.Sprintf("updating native Pod handoff: %v", err)
 		return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "HandoffError", message, pendingConditions("HandoffError", message), endpoint, helperStatus)
 	}
@@ -209,8 +213,8 @@ func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, expor
 		return managedResources{}, err
 	}
 
+	policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: policyName(export), Namespace: export.Namespace}}
 	if networkPolicyEnabled(export) {
-		policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: policyName(export), Namespace: export.Namespace}}
 		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
 			want := desiredNetworkPolicy(export, labelsFor, mountPort, nfsPort)
 			policy.Labels = want.Labels
@@ -220,6 +224,8 @@ func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, expor
 		if err != nil {
 			return managedResources{}, err
 		}
+	} else if err := r.deleteOwned(ctx, export, policy); err != nil {
+		return managedResources{}, err
 	}
 
 	return managedResources{deployment: deployment, service: service, mountPort: mountPort, nfsPort: nfsPort}, nil
@@ -522,7 +528,7 @@ func handoffEnabled(e *storagev1alpha1.LonghornNFSExport) bool {
 }
 
 func (r *LonghornNFSExportReconciler) updateHandoff(ctx context.Context, e *storagev1alpha1.LonghornNFSExport, endpoint *storagev1alpha1.EndpointStatus) error {
-	if !handoffEnabled(e) || len(e.Spec.Handoff.NativePodSelector) == 0 {
+	if len(e.Spec.Handoff.NativePodSelector) == 0 {
 		return nil
 	}
 	selector := labels.SelectorFromSet(labels.Set(e.Spec.Handoff.NativePodSelector))
