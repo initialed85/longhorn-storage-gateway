@@ -315,6 +315,7 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 							{Name: "ganesha-config", MountPath: "/etc/ganesha/ganesha.conf", SubPath: "ganesha.conf", ReadOnly: true},
 							{Name: "ganesha-run", MountPath: "/var/run/ganesha"},
 							{Name: "ganesha-state", MountPath: "/var/lib/nfs"},
+							{Name: "host-mtab", MountPath: "/etc/mtab", ReadOnly: true},
 						},
 					}},
 					Volumes: []corev1.Volume{
@@ -322,6 +323,7 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 						{Name: "ganesha-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: helperConfigName(e)}}}},
 						{Name: "ganesha-run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 						{Name: "ganesha-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "host-mtab", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/etc/mtab", Type: pointer(corev1.HostPathFile)}}},
 					},
 				},
 			},

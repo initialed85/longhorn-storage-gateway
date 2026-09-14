@@ -59,6 +59,9 @@ spec:
               mountPath: /var/run/ganesha
             - name: ganesha-state
               mountPath: /var/lib/nfs
+            - name: host-mtab
+              mountPath: /etc/mtab
+              readOnly: true
       volumes:
         - name: export
           persistentVolumeClaim:
@@ -70,3 +73,7 @@ spec:
           emptyDir: {}
         - name: ganesha-state
           emptyDir: {}
+        - name: host-mtab
+          hostPath:
+            path: /etc/mtab
+            type: File
