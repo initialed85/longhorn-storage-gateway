@@ -5,11 +5,12 @@ workloads through a generic NFS endpoint. This repository deliberately keeps
 Longhorn-specific discovery and helper lifecycle out of maclet. Maclet consumes
 only the generic handoff contract documented in [`docs/handoff.md`](docs/handoff.md).
 
-> **Status: controller baseline / POC.** The `v1alpha1` API contract, a
-> controller implementation, focused reconciliation tests, and manual helper
-> POC manifests are present. macOS NFSv3 validation, failure-injection tests,
-> image release, and production readiness gates are not complete. Do not
-> advertise Longhorn gateway support in a Macgrubernetes release yet.
+> **Status: controller baseline / acceptance in progress.** The `v1alpha1` API
+> contract, controller implementation, focused reconciliation tests, manual
+> helper POC manifests, and pinned multi-architecture acceptance images are
+> present. The home-dev RWO gate passed; the independent RWX NFSv4-to-v3 gate
+> is currently blocked. See [`docs/acceptance/home-dev-20260914.md`](docs/acceptance/home-dev-20260914.md).
+> Do not advertise Longhorn gateway support in a Macgrubernetes release yet.
 
 ## Design boundary
 
