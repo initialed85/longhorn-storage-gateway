@@ -116,7 +116,7 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	helperReady := resources.deployment.Status.ReadyReplicas >= 1 && resources.deployment.Status.AvailableReplicas >= 1
-	endpointReady := helperReady && serviceEndpointReady(resources.service)
+	endpointReady := helperReady && serviceEndpointReady(resources.service, resources.mountPort, resources.nfsPort)
 	helperStatus := &storagev1alpha1.HelperStatus{
 		Name:           resources.deployment.Name,
 		ServiceName:    resources.service.Name,
@@ -516,8 +516,20 @@ func ownedResourceByExport(obj metav1.Object, e *storagev1alpha1.LonghornNFSExpo
 	return false
 }
 
-func serviceEndpointReady(service *corev1.Service) bool {
-	return service != nil && service.Spec.ClusterIP != "" && service.Spec.ClusterIP != corev1.ClusterIPNone && len(service.Spec.Ports) >= 2
+func serviceEndpointReady(service *corev1.Service, mountPort, nfsPort int32) bool {
+	if service == nil || service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone || len(service.Spec.Ports) != 2 {
+		return false
+	}
+	seenNFS, seenMountd := false, false
+	for _, port := range service.Spec.Ports {
+		switch port.Name {
+		case "nfs":
+			seenNFS = port.Protocol == corev1.ProtocolTCP && port.Port == nfsPort && port.TargetPort == intstr.FromString("nfs")
+		case "mountd":
+			seenMountd = port.Protocol == corev1.ProtocolTCP && port.Port == mountPort && port.TargetPort == intstr.FromString("mountd")
+		}
+	}
+	return seenNFS && seenMountd
 }
 
 func networkPolicyEnabled(e *storagev1alpha1.LonghornNFSExport) bool {
