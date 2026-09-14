@@ -26,8 +26,8 @@ spec:
         - name: nfs-ganesha
           image: REPLACE_WITH_PINNED_NFS_GANESHA_IMAGE
           imagePullPolicy: IfNotPresent
-          command: ["ganesha.nfsd"]
-          args: ["-F", "-L", "STDOUT", "-f", "/etc/ganesha/ganesha.conf"]
+          command: ["/bin/sh", "-c"]
+          args: ["ln -sf /proc/mounts /etc/mtab && exec ganesha.nfsd -F -L STDOUT -f /etc/ganesha/ganesha.conf"]
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
@@ -59,9 +59,6 @@ spec:
               mountPath: /var/run/ganesha
             - name: ganesha-state
               mountPath: /var/lib/nfs
-            - name: host-mtab
-              mountPath: /etc/mtab
-              readOnly: true
       volumes:
         - name: export
           persistentVolumeClaim:
@@ -73,7 +70,3 @@ spec:
           emptyDir: {}
         - name: ganesha-state
           emptyDir: {}
-        - name: host-mtab
-          hostPath:
-            path: /etc/mtab
-            type: File
