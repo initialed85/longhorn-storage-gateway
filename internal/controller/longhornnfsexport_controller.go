@@ -313,11 +313,15 @@ func desiredDeployment(e *storagev1alpha1.LonghornNFSExport, labelsFor map[strin
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "export", MountPath: defaultExportPath},
 							{Name: "ganesha-config", MountPath: "/etc/ganesha/ganesha.conf", SubPath: "ganesha.conf", ReadOnly: true},
+							{Name: "ganesha-run", MountPath: "/var/run/ganesha"},
+							{Name: "ganesha-state", MountPath: "/var/lib/nfs"},
 						},
 					}},
 					Volumes: []corev1.Volume{
 						{Name: "export", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.Spec.PVCRef.Name}}},
 						{Name: "ganesha-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: helperConfigName(e)}}}},
+						{Name: "ganesha-run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "ganesha-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 					},
 				},
 			},

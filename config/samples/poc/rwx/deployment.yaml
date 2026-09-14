@@ -55,6 +55,10 @@ spec:
               mountPath: /etc/ganesha/ganesha.conf
               subPath: ganesha.conf
               readOnly: true
+            - name: ganesha-run
+              mountPath: /var/run/ganesha
+            - name: ganesha-state
+              mountPath: /var/lib/nfs
       volumes:
         - name: export
           persistentVolumeClaim:
@@ -62,3 +66,7 @@ spec:
         - name: ganesha-config
           configMap:
             name: longhorn-nfs-ganesha
+        - name: ganesha-run
+          emptyDir: {}
+        - name: ganesha-state
+          emptyDir: {}
