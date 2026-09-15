@@ -251,6 +251,10 @@ func TestRWXWaitsForShareManagerWithoutCreatingProxy(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: helperName(export)}, &deployment); err == nil {
 		t.Fatal("proxy should not be created without a share-manager endpoint")
 	}
+	var bootstrap appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Namespace: export.Namespace, Name: bootstrapName(export)}, &bootstrap); err != nil {
+		t.Fatalf("RWX bootstrap consumer was not created: %v", err)
+	}
 }
 
 func TestRWORejectsAnotherConsumer(t *testing.T) {

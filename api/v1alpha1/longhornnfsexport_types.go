@@ -48,6 +48,7 @@ type HelperSpec struct {
 	Image              string            `json:"image,omitempty"`
 	NFSGaneshaImage    string            `json:"nfsGaneshaImage,omitempty"`
 	ProxyImage         string            `json:"proxyImage,omitempty"`
+	BootstrapImage     string            `json:"bootstrapImage,omitempty"`
 	NodeSelector       map[string]string `json:"nodeSelector,omitempty"`
 	ServiceAccountName string            `json:"serviceAccountName,omitempty"`
 }
@@ -95,11 +96,15 @@ type EndpointStatus struct {
 }
 
 type HelperStatus struct {
-	Name           string `json:"name,omitempty"`
-	ServiceName    string `json:"serviceName,omitempty"`
-	Ready          bool   `json:"ready,omitempty"`
-	ObservedPVCUID string `json:"observedPVCUID,omitempty"`
-	ObservedPVName string `json:"observedPVName,omitempty"`
+	Name              string `json:"name,omitempty"`
+	ServiceName       string `json:"serviceName,omitempty"`
+	Ready             bool   `json:"ready,omitempty"`
+	BootstrapName     string `json:"bootstrapName,omitempty"`
+	BootstrapReady    bool   `json:"bootstrapReady,omitempty"`
+	ProxyReady        bool   `json:"proxyReady,omitempty"`
+	ShareManagerReady bool   `json:"shareManagerReady,omitempty"`
+	ObservedPVCUID    string `json:"observedPVCUID,omitempty"`
+	ObservedPVName    string `json:"observedPVName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

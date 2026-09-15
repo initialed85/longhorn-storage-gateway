@@ -33,6 +33,7 @@ const (
 	longhornDriver               = "driver.longhorn.io"
 	defaultNFSGaneshaImage       = "docker.io/longhornio/nfs-ganesha@sha256:e633d9f2aa0281c6def298651a1b83a5dbb19f03f435f049aa1a757a53aa882b"
 	defaultProxyImage            = "docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1e"
+	defaultBootstrapImage        = "docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
 	defaultServiceType           = "ClusterIP"
 	shareManagerNamespace        = "longhorn-system"
 	defaultMountPort       int32 = 20048
@@ -116,36 +117,57 @@ func (r *LonghornNFSExportReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	var backend *shareManagerEndpoint
+	var bootstrap *appsv1.Deployment
 	if export.Spec.Mode == storagev1alpha1.ModeRWX {
+		bootstrap, err = r.ensureBootstrap(ctx, &export)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "BootstrapError", err.Error(), pendingConditions("BootstrapError", err.Error()), nil, nil)
+		}
 		backend, reason, message, err = r.findShareManager(ctx, pv)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if backend == nil {
-			if cleanupErr := r.cleanupManagedResources(ctx, &export); cleanupErr != nil {
+			if cleanupErr := r.cleanupProxyResources(ctx, &export); cleanupErr != nil {
 				return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "CleanupFailed", cleanupErr.Error(), pendingConditions("CleanupFailed", cleanupErr.Error()), nil, nil)
 			}
 			values := pendingConditions(reason, message)
 			values[storagev1alpha1.ConditionPVCBound] = conditionValue{metav1.ConditionTrue, "Bound", "PVC is Bound to a Longhorn volume"}
-			return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhasePending, reason, message, values, nil, nil)
+			if bootstrapReady(bootstrap) {
+				values[storagev1alpha1.ConditionHelperReady] = conditionValue{metav1.ConditionTrue, "BootstrapReady", "RWX bootstrap consumer is Ready"}
+			}
+			helperStatus := &storagev1alpha1.HelperStatus{BootstrapName: bootstrap.Name, BootstrapReady: bootstrapReady(bootstrap), Ready: false, ObservedPVCUID: string(pvc.UID), ObservedPVName: pv.Name}
+			return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhasePending, reason, message, values, nil, helperStatus)
 		}
 	}
 
 	resources, err := r.ensureResources(ctx, &export, backend)
+	resources.bootstrap = bootstrap
 	if err != nil {
 		message := fmt.Sprintf("ensuring gateway resources: %v", err)
 		return ctrl.Result{RequeueAfter: requeueAfterSeconds}, r.setStatus(ctx, &export, storagev1alpha1.PhaseDegraded, "ResourceError", message, pendingConditions("ResourceError", message), nil, nil)
 	}
 
-	helperReady := resources.deployment.Status.ReadyReplicas >= 1 && resources.deployment.Status.AvailableReplicas >= 1
+	proxyReady := resources.deployment.Status.ReadyReplicas >= 1 && resources.deployment.Status.AvailableReplicas >= 1
+	bootstrapIsReady := bootstrapReady(resources.bootstrap)
+	helperReady := proxyReady && (export.Spec.Mode != storagev1alpha1.ModeRWX || bootstrapIsReady)
 	endpointServer, endpointMountPort, endpointNFSPort, endpointReady := endpointForService(&export, resources.service, resources.mountPort, resources.nfsPort)
 	endpointReady = helperReady && endpointReady
 	helperStatus := &storagev1alpha1.HelperStatus{
-		Name:           resources.deployment.Name,
-		ServiceName:    resources.service.Name,
-		Ready:          helperReady,
-		ObservedPVCUID: string(pvc.UID),
-		ObservedPVName: pv.Name,
+		Name:        resources.deployment.Name,
+		ServiceName: resources.service.Name,
+		Ready:       helperReady,
+		BootstrapName: func() string {
+			if resources.bootstrap != nil {
+				return resources.bootstrap.Name
+			}
+			return ""
+		}(),
+		BootstrapReady:    bootstrapIsReady,
+		ProxyReady:        proxyReady,
+		ShareManagerReady: backend != nil,
+		ObservedPVCUID:    string(pvc.UID),
+		ObservedPVName:    pv.Name,
 	}
 	var endpoint *storagev1alpha1.EndpointStatus
 	if endpointReady {
@@ -200,13 +222,64 @@ type shareManagerEndpoint struct {
 
 type managedResources struct {
 	deployment *appsv1.Deployment
+	bootstrap  *appsv1.Deployment
 	service    *corev1.Service
 	mountPort  int32
 	nfsPort    int32
 }
 
+func bootstrapName(e *storagev1alpha1.LonghornNFSExport) string {
+	return boundedName(e.Name, "-bootstrap")
+}
+
+func bootstrapLabels(e *storagev1alpha1.LonghornNFSExport) map[string]string {
+	labels := resourceLabels(e)
+	labels["storage.k8s-darwin.dev/component"] = "rwx-bootstrap"
+	return labels
+}
+
+func bootstrapReady(deployment *appsv1.Deployment) bool {
+	return deployment != nil && deployment.Status.ReadyReplicas >= 1 && deployment.Status.AvailableReplicas >= 1
+}
+
+func (r *LonghornNFSExportReconciler) ensureBootstrap(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) (*appsv1.Deployment, error) {
+	labels := bootstrapLabels(e)
+	image := e.Spec.Helper.BootstrapImage
+	if image == "" {
+		image = defaultBootstrapImage
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: bootstrapName(e), Namespace: e.Namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		deployment.Labels = labels
+		deployment.Spec = appsv1.DeploymentSpec{
+			Replicas: pointer(int32(1)),
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					TerminationGracePeriodSeconds: pointer(int64(30)),
+					Containers:                    []corev1.Container{{Name: "bootstrap", Image: image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c"}, Args: []string{"mkdir -p /bootstrap && touch /bootstrap/.longhorn-nfs-gateway && sleep 3600"}, VolumeMounts: []corev1.VolumeMount{{Name: "pvc", MountPath: "/bootstrap"}}}},
+					Volumes:                       []corev1.Volume{{Name: "pvc", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.Spec.PVCRef.Name}}}},
+				},
+			},
+		}
+		return controllerutil.SetControllerReference(e, deployment, r.Scheme)
+	})
+	return deployment, err
+}
+
+func (r *LonghornNFSExportReconciler) deleteBootstrap(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) error {
+	return r.deleteOwned(ctx, e, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: bootstrapName(e), Namespace: e.Namespace}})
+}
+
 func (r *LonghornNFSExportReconciler) ensureResources(ctx context.Context, export *storagev1alpha1.LonghornNFSExport, backend *shareManagerEndpoint) (managedResources, error) {
 	mountPort, nfsPort := portsFor(export)
+	if export.Spec.Mode == storagev1alpha1.ModeRWO {
+		if err := r.deleteBootstrap(ctx, export); err != nil {
+			return managedResources{}, err
+		}
+	}
 	labelsFor := resourceLabels(export)
 	owner := func(obj client.Object) error { return controllerutil.SetControllerReference(export, obj, r.Scheme) }
 
@@ -783,6 +856,7 @@ func (r *LonghornNFSExportReconciler) finalize(ctx context.Context, e *storagev1
 	}
 	resources := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: helperName(e), Namespace: e.Namespace}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: bootstrapName(e), Namespace: e.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(e), Namespace: e.Namespace}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: helperConfigName(e), Namespace: e.Namespace}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: policyName(e), Namespace: e.Namespace}},
@@ -804,7 +878,7 @@ func (r *LonghornNFSExportReconciler) cleanupFailure(ctx context.Context, e *sto
 	return cleanupErr
 }
 
-func (r *LonghornNFSExportReconciler) cleanupManagedResources(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) error {
+func (r *LonghornNFSExportReconciler) cleanupProxyResources(ctx context.Context, e *storagev1alpha1.LonghornNFSExport) error {
 	resources := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: helperName(e), Namespace: e.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName(e), Namespace: e.Namespace}},

@@ -80,9 +80,10 @@ NodePort/LoadBalancer handoff requires `spec.service.externalAddress` when no
 LoadBalancer ingress is assigned. The generated Deployment uses `Recreate` so
 RWO replacement cannot overlap helpers.
 
-For RWX, the controller discovers the Longhorn share-manager Service from the
-bound PV, waits for its NFS endpoint, and generates an FSAL_PROXY_V4 helper
-using the pinned proxy image
+For RWX, the controller first creates a controller-owned Recreate bootstrap
+consumer that mounts the RWX PVC, which triggers Longhorn's share-manager. It
+then discovers the share-manager Service/EndpointSlice and generates an
+FSAL_PROXY_V4 helper using the pinned proxy image
 `docker.io/initialed85/nfs-ganesha-proxy-v4@sha256:d6ce0ab841c4f353aa4745007baa5f3b45c3dfceeb0f69a05edd6ba88dfaed1e`.
 If the share-manager disappears, controller-owned proxy resources are removed
 and recreated when the endpoint returns. This path still requires independent
