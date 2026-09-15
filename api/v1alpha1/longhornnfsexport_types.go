@@ -23,6 +23,7 @@ const (
 	AnnotationNFSExport     = "storage.k8s-darwin.dev/nfs-export"
 	AnnotationNFSVersion    = "storage.k8s-darwin.dev/nfs-version"
 	AnnotationNFSMountPort  = "storage.k8s-darwin.dev/nfs-mount-port"
+	AnnotationNFSPort       = "storage.k8s-darwin.dev/nfs-port"
 	AnnotationNFSGeneration = "storage.k8s-darwin.dev/nfs-generation"
 
 	Finalizer = "storage.k8s-darwin.dev/longhorn-nfs-export"

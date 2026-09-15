@@ -15,6 +15,7 @@ native Pods after helper readiness:
 | `storage.k8s-darwin.dev/nfs-export` | Export path, normally `/export` |
 | `storage.k8s-darwin.dev/nfs-version` | Protocol version; the POC requires `3` |
 | `storage.k8s-darwin.dev/nfs-mount-port` | TCP mountd port, normally `20048` |
+| `storage.k8s-darwin.dev/nfs-port` | TCP NFS port; NodePort for a NodePort endpoint or Service port for ClusterIP |
 | `storage.k8s-darwin.dev/nfs-generation` | Monotonic handoff generation |
 
 The annotations are endpoint data only. They do not grant access, select a

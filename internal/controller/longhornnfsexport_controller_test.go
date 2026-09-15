@@ -119,7 +119,7 @@ func TestReconcileCreatesDeterministicResourcesAndHandoff(t *testing.T) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
 		t.Fatal(err)
 	}
-	if pod.Annotations["example.com/keep"] != "yes" || pod.Annotations[storagev1alpha1.AnnotationNFSServer] != "10.43.7.7" || pod.Annotations[storagev1alpha1.AnnotationNFSVersion] != "3" {
+	if pod.Annotations["example.com/keep"] != "yes" || pod.Annotations[storagev1alpha1.AnnotationNFSServer] != "10.43.7.7" || pod.Annotations[storagev1alpha1.AnnotationNFSVersion] != "3" || pod.Annotations[storagev1alpha1.AnnotationNFSPort] != "2049" {
 		t.Fatalf("handoff annotations were not published safely: %#v", pod.Annotations)
 	}
 }

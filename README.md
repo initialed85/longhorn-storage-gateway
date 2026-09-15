@@ -47,6 +47,7 @@ storage.k8s-darwin.dev/nfs-server       <Service ClusterIP or reachable DNS name
 storage.k8s-darwin.dev/nfs-export       /export
 storage.k8s-darwin.dev/nfs-version      3
 storage.k8s-darwin.dev/nfs-mount-port   20048
+storage.k8s-darwin.dev/nfs-port          2049 or the allocated NodePort
 storage.k8s-darwin.dev/nfs-generation   <controller generation>
 ```
 

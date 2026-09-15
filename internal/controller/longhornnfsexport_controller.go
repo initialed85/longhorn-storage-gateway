@@ -830,6 +830,7 @@ func (r *LonghornNFSExportReconciler) updateHandoff(ctx context.Context, e *stor
 			pod.Annotations[storagev1alpha1.AnnotationNFSExport] = endpoint.Export
 			pod.Annotations[storagev1alpha1.AnnotationNFSVersion] = strconv.Itoa(int(endpoint.Version))
 			pod.Annotations[storagev1alpha1.AnnotationNFSMountPort] = strconv.Itoa(int(endpoint.MountPort))
+			pod.Annotations[storagev1alpha1.AnnotationNFSPort] = strconv.Itoa(int(endpoint.NFSPort))
 			pod.Annotations[storagev1alpha1.AnnotationNFSGeneration] = endpoint.Generation
 		}
 		if !reflect.DeepEqual(before.Annotations, pod.Annotations) {
@@ -845,7 +846,7 @@ func removeHandoffAnnotations(pod *corev1.Pod) {
 	if pod.Annotations == nil {
 		return
 	}
-	for _, key := range []string{storagev1alpha1.AnnotationNFSServer, storagev1alpha1.AnnotationNFSExport, storagev1alpha1.AnnotationNFSVersion, storagev1alpha1.AnnotationNFSMountPort, storagev1alpha1.AnnotationNFSGeneration} {
+	for _, key := range []string{storagev1alpha1.AnnotationNFSServer, storagev1alpha1.AnnotationNFSExport, storagev1alpha1.AnnotationNFSVersion, storagev1alpha1.AnnotationNFSMountPort, storagev1alpha1.AnnotationNFSPort, storagev1alpha1.AnnotationNFSGeneration} {
 		delete(pod.Annotations, key)
 	}
 }

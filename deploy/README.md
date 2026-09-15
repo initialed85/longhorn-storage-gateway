@@ -5,7 +5,7 @@ controller ServiceAccount/RBAC, manager namespace, and pinned controller image.
 The current release controller image is:
 
 ```text
-docker.io/initialed85/longhorn-nfs-gateway@sha256:ce985e989543c0faa1e16b4660fe80f86576e08ae1fb1c8def34b8564e7ac4e3
+docker.io/initialed85/longhorn-nfs-gateway@sha256:f5804c26859427a1c560381da2bc95623761c0518f257fa2b79f1626a3f740c9
 ```
 
 Render or apply it with:

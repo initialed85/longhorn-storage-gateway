@@ -6,4 +6,4 @@ resources:
 images:
   - name: ghcr.io/initialed85/longhorn-nfs-gateway
     newName: docker.io/initialed85/longhorn-nfs-gateway
-    digest: sha256:ce985e989543c0faa1e16b4660fe80f86576e08ae1fb1c8def34b8564e7ac4e3
+    digest: sha256:f5804c26859427a1c560381da2bc95623761c0518f257fa2b79f1626a3f740c9
