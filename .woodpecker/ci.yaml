@@ -1,0 +1,18 @@
+# The Longhorn storage gateway helper. fmt, vet, tests on the go.mod line (1.24.0).
+#
+# The Dockerfile builds a static binary; publishing it is a separate step because nothing in either
+# cluster runs this image yet — it is deployed on the storage nodes by hand.
+steps:
+  - name: test
+    image: docker.io/library/golang:1.24
+    commands:
+      - go version
+      - gofmt -l .
+      - test -z "$(gofmt -l .)"
+      - go vet ./...
+      - go test -count=1 ./...
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
